@@ -1,0 +1,64 @@
+{
+  "app": {
+    "name": "TranslateChat",
+    "tagline": "Break language barriers with real-time conversation translation"
+  },
+  "home": {
+    "createConversation": "Create Conversation",
+    "joinConversation": "Join Conversation",
+    "features": {
+      "instantTranslation": {
+        "title": "Instant Translation",
+        "description": "Messages automatically translated to your language"
+      },
+      "voiceInput": {
+        "title": "Voice Input",
+        "description": "Speak naturally in your language"
+      },
+      "groupChat": {
+        "title": "Group Chat",
+        "description": "Multiple languages in one conversation"
+      }
+    },
+    "footer": "© 2025 TranslateChat. All rights reserved."
+  },
+  "room": {
+    "created": {
+      "title": "Room Created!",
+      "shareCode": "Share this code with others to join your conversation:",
+      "waiting": "Waiting for others to join..."
+    },
+    "leaveConversation": "Leave Conversation",
+    "unknownUser": "Unknown"
+  },
+  "join": {
+    "title": "Join Conversation",
+    "roomCode": "Room Code",
+    "yourName": "Your Name",
+    "yourLanguage": "Your Language",
+    "selectLanguage": "Select your language",
+    "joinButton": "Join Conversation",
+    "errors": {
+      "nameRequired": "Name is required",
+      "languageRequired": "Language is required",
+      "joinFailed": "Failed to join room"
+    }
+  },
+  "create": {
+    "title": "Create Conversation",
+    "yourName": "Your Name",
+    "yourLanguage": "Your Language",
+    "selectLanguage": "Select your language",
+    "createButton": "Create Room",
+    "errors": {
+      "nameRequired": "Name is required",
+      "languageRequired": "Language is required",
+      "createFailed": "Failed to create room"
+    }
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "close": "Close"
+  }
+} 

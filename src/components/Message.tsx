@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { getLanguageName } from '../lib/languages';
 import { MessageData } from '../lib/types';
 
@@ -10,6 +11,7 @@ type MessageProps = {
 };
 
 const Message: React.FC<MessageProps> = ({ message, isCurrentUser, userLanguage }) => {
+  const { t } = useTranslation();
   const translatedText = message.translations[userLanguage] || 
     (message.originalLanguage === userLanguage ? message.originalText : '');
 
@@ -35,7 +37,7 @@ const Message: React.FC<MessageProps> = ({ message, isCurrentUser, userLanguage 
       >
         {!isCurrentUser && (
           <div className="text-sm font-medium text-primary-700 mb-1">
-            {message.senderName}
+            {message.senderName || t('room.unknownUser')}
           </div>
         )}
         
