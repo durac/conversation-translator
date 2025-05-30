@@ -13,7 +13,7 @@ const Header: React.FC<HeaderProps> = ({ title, showBackButton = false, roomCode
     <header className="bg-white border-b border-gray-200 py-3 px-4 flex items-center justify-between">
       <div className="flex items-center gap-3">
         {showBackButton && (
-          <Link to="/\" className="p-1 -ml-1 rounded-full hover:bg-gray-100">
+          <Link to="/" className="p-1 -ml-1 rounded-full hover:bg-gray-100">
             <ArrowLeft size={20} className="text-gray-600" />
           </Link>
         )}

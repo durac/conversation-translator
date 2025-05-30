@@ -18,10 +18,11 @@ type FormData = {
 const JoinRoom: React.FC = () => {
   const navigate = useNavigate();
   const supabase = useSupabase();
-  const { joinRoom, isLoading, error, clearError } = useRoomStore();
+  const { joinRoom, isLoading } = useRoomStore();
   const [selectedLanguage, setSelectedLanguage] = useState('');
+  const [error, setError] = useState('');
   
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<FormData>({
     defaultValues: {
       roomCode: '',
       userName: '',
@@ -29,17 +30,27 @@ const JoinRoom: React.FC = () => {
     }
   });
   
+  // Add validation for language
+  React.useEffect(() => {
+    register('language', { required: 'Language is required' });
+  }, [register]);
+
   const onSubmit = async (data: FormData) => {
+    if (!data.language) {
+      return; // Don't submit if no language is selected
+    }
     try {
-      await joinRoom(supabase, data.roomCode, data.userName, data.language);
-      // Store user data for room rejoining
+      const { participantId } = await joinRoom(supabase, data.roomCode, data.userName, data.language);
+      // Store participant data with the returned participantId
       localStorage.setItem(`room_${data.roomCode}_user`, JSON.stringify({
         userName: data.userName,
-        language: data.language
+        language: data.language,
+        participantId
       }));
       navigate(`/room/${data.roomCode}`);
     } catch (error) {
-      console.error('Failed to join room:', error);
+      console.error('Error joining room:', error);
+      setError(error instanceof Error ? error.message : 'Failed to join room');
     }
   };
 
@@ -59,7 +70,7 @@ const JoinRoom: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <Header title="Join Conversation" showBackButton />
+      <Header title="Join Conversation" showBackButton/>
       
       <main className="flex-1 p-4 md:p-6 flex items-center justify-center">
         <motion.div
@@ -84,9 +95,6 @@ const JoinRoom: React.FC = () => {
                   <div className="flex-1">
                     <p className="text-sm">{error}</p>
                   </div>
-                  <button onClick={clearError} className="text-error-500">
-                    &times;
-                  </button>
                 </div>
               </div>
             )}
@@ -140,8 +148,7 @@ const JoinRoom: React.FC = () => {
                   value={selectedLanguage}
                   onChange={(language) => {
                     setSelectedLanguage(language);
-                    // Update the form value
-                    register('language', { value: language });
+                    setValue('language', language, { shouldValidate: true });
                   }}
                   className={errors.language ? 'border-error-500 focus:ring-error-500 focus:border-error-500' : ''}
                 />

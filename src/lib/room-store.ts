@@ -1,7 +1,13 @@
 import { create } from 'zustand';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import { nanoid } from 'nanoid';
-import { MessageData, ParticipantData } from './types';
+import { MessageData, ParticipantData, Database } from './types';
+import { translateText as openAITranslateText } from './openai';
+
+type DatabaseMessage = Database['public']['Tables']['messages']['Row'] & {
+  participants: { user_name: string } | null;
+  translations: Array<{ language: string; translated_text: string }>;
+};
 
 interface RoomState {
   roomId: string | null;
@@ -12,12 +18,14 @@ interface RoomState {
   currentLanguage: string | null;
   isLoading: boolean;
   error: string | null;
+  channel: RealtimeChannel | null;  // Use proper type for channel
+  isCreatingRoom: boolean;  // Add flag for room creation state
   
   // Actions
-  createRoom: (supabase: SupabaseClient, creatorName: string, language: string) => Promise<string>;
-  joinRoom: (supabase: SupabaseClient, roomCode: string, userName: string, language: string) => Promise<void>;
+  createRoom: (supabase: SupabaseClient, creatorName: string, language: string) => Promise<{ roomCode: string; participantId: string }>;
+  joinRoom: (supabase: SupabaseClient<Database>, roomCode: string, userName: string, language: string) => Promise<{ participantId: string }>;
   leaveRoom: (supabase: SupabaseClient) => void;
-  sendMessage: (supabase: SupabaseClient, text: string) => Promise<void>;
+  sendMessage: (supabase: SupabaseClient<Database>, text: string) => Promise<void>;
   clearError: () => void;
 }
 
@@ -30,10 +38,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   currentLanguage: null,
   isLoading: false,
   error: null,
+  channel: null,
+  isCreatingRoom: false,
 
   createRoom: async (supabase: SupabaseClient, creatorName: string, language: string) => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, isCreatingRoom: true });
     try {
+      console.log('Creating room for:', creatorName);
       // Generate a 6-digit room code
       const roomCode = Math.floor(100000 + Math.random() * 900000).toString();
       const roomId = nanoid();
@@ -51,6 +62,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       
       // Insert creator as first participant
       const participantId = nanoid();
+      console.log('Creating participant with ID:', participantId);
       const { error: participantError } = await supabase
         .from('participants')
         .insert({
@@ -62,30 +74,63 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         
       if (participantError) throw new Error(participantError.message);
       
+      // Get all participants to ensure we have the correct state
+      const { data: participants, error: participantsError } = await supabase
+        .from('participants')
+        .select('id, user_name, language')
+        .eq('room_id', roomId);
+        
+      if (participantsError) throw new Error(participantsError.message);
+      
+      console.log('Initial participants:', participants);
+      
       // Set room data in store
-      set({
+      const initialState = {
         roomId,
         roomCode,
-        participants: [{ id: participantId, userName: creatorName, language }],
+        participants: (participants || []).map(p => ({
+          id: p.id,
+          userName: p.user_name,
+          language: p.language
+        })),
         currentParticipantId: participantId,
         currentLanguage: language,
-        isLoading: false
-      });
+        isLoading: false,
+        isCreatingRoom: false
+      };
       
-      // Setup real-time subscription
-      setupRoomSubscriptions(supabase, roomId);
+      // Set initial state
+      set(initialState);
       
-      return roomCode;
+      // Setup real-time subscription AFTER setting initial state
+      const channel = setupRoomSubscriptions(supabase, roomId);
+      
+      // Store channel reference for cleanup
+      const state = get();
+      if (state.channel) {
+        state.channel.unsubscribe();
+      }
+      set({ channel });
+      
+      return { roomCode, participantId };
     } catch (error) {
+      console.error('Error creating room:', error);
       set({ 
         error: error instanceof Error ? error.message : 'Failed to create room', 
-        isLoading: false 
+        isLoading: false,
+        isCreatingRoom: false
       });
       throw error;
     }
   },
 
-  joinRoom: async (supabase: SupabaseClient, roomCode: string, userName: string, language: string) => {
+  joinRoom: async (supabase: SupabaseClient<Database>, roomCode: string, userName: string, language: string) => {
+    // Don't join if we're creating a room
+    if (get().isCreatingRoom) {
+      console.log('Skipping join while creating room');
+      return { participantId: '' };
+    }
+
     set({ isLoading: true, error: null });
     try {
       // Find room by code
@@ -99,20 +144,92 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       
       const roomId = roomData.id;
       
-      // Insert new participant
-      const participantId = nanoid();
-      const { error: participantError } = await supabase
-        .from('participants')
-        .insert({
-          id: participantId,
-          room_id: roomId,
-          user_name: userName,
-          language: language
-        });
-        
-      if (participantError) throw new Error(participantError.message);
+      // Get stored participant ID for this room
+      const storedUserData = localStorage.getItem(`room_${roomCode}_user`);
+      let participantId: string;
       
-      // Get existing participants
+      if (storedUserData) {
+        try {
+          const { participantId: storedId } = JSON.parse(storedUserData);
+          
+          // Verify the participant still exists
+          const { data: existingParticipant } = await supabase
+            .from('participants')
+            .select('id, language')
+            .eq('id', storedId)
+            .eq('room_id', roomId)
+            .single();
+            
+          console.log('***** existingParticipant', existingParticipant);
+          if (existingParticipant) {
+            // Use existing participant
+            participantId = existingParticipant.id;
+            language = existingParticipant.language; // Use stored language preference
+          } else {
+            // Stored participant no longer exists, create new one
+            participantId = nanoid();
+            const { error: participantError } = await supabase
+              .from('participants')
+              .insert({
+                id: participantId,
+                room_id: roomId,
+                user_name: userName,
+                language: language
+              });
+              
+            if (participantError) throw new Error(participantError.message);
+            
+            // Store new participant ID
+            localStorage.setItem(`room_${roomCode}_user`, JSON.stringify({
+              userName,
+              language,
+              participantId
+            }));
+          }
+        } catch (e) {
+          // If there's any error with stored data, create new participant
+          participantId = nanoid();
+          const { error: participantError } = await supabase
+            .from('participants')
+            .insert({
+              id: participantId,
+              room_id: roomId,
+              user_name: userName,
+              language: language
+            });
+            
+          if (participantError) throw new Error(participantError.message);
+          
+          // Store new participant data
+          localStorage.setItem(`room_${roomCode}_user`, JSON.stringify({
+            userName,
+            language,
+            participantId
+          }));
+        }
+      } else {
+        // New participant
+        participantId = nanoid();
+        const { error: participantError } = await supabase
+          .from('participants')
+          .insert({
+            id: participantId,
+            room_id: roomId,
+            user_name: userName,
+            language: language
+          });
+          
+        if (participantError) throw new Error(participantError.message);
+        
+        // Store participant data
+        localStorage.setItem(`room_${roomCode}_user`, JSON.stringify({
+          userName,
+          language,
+          participantId
+        }));
+      }
+      
+      // Get all participants
       const { data: participants, error: participantsError } = await supabase
         .from('participants')
         .select('id, user_name, language')
@@ -138,14 +255,14 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       if (messagesError) throw new Error(messagesError.message);
       
       // Format messages
-      const formattedMessages = messages.map((msg) => {
+      const formattedMessages = (messages as DatabaseMessage[]).map((msg) => {
         return {
           id: msg.id,
           senderId: msg.sender_id,
           senderName: msg.participants?.user_name || 'Unknown',
           originalText: msg.original_text,
           originalLanguage: msg.original_language,
-          translations: msg.translations.reduce((acc, t) => {
+          translations: msg.translations.reduce<Record<string, string>>((acc, t) => {
             acc[t.language] = t.translated_text;
             return acc;
           }, {}),
@@ -157,7 +274,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       set({
         roomId,
         roomCode,
-        participants: participants.map(p => ({
+        participants: (participants || []).map(p => ({
           id: p.id,
           userName: p.user_name,
           language: p.language
@@ -171,9 +288,11 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       // Setup real-time subscription
       setupRoomSubscriptions(supabase, roomId);
       
-    } catch (error) {
+      return { participantId };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to join room';
       set({ 
-        error: error instanceof Error ? error.message : 'Failed to join room', 
+        error: errorMessage,
         isLoading: false 
       });
       throw error;
@@ -181,35 +300,39 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
 
   leaveRoom: (supabase: SupabaseClient) => {
-    const { roomId, currentParticipantId } = get();
+    const { roomId, currentParticipantId, channel } = get();
     
     if (roomId && currentParticipantId) {
-      // Remove participant from database
-      supabase
+      // Cleanup subscription
+      if (channel) {
+        channel.unsubscribe();
+      }
+      
+      // Only remove the participant from the database
+      void supabase
         .from('participants')
         .delete()
         .eq('id', currentParticipantId)
         .then(() => {
-          // Remove subscriptions
-          supabase.removeAllChannels();
-          
-          // Reset store
+          // Reset store state for this user only
           set({
             roomId: null,
             roomCode: null,
-            participants: [],
-            messages: [],
             currentParticipantId: null,
-            currentLanguage: null
+            currentLanguage: null,
+            channel: null,
+            isCreatingRoom: false,  // Reset creation flag
+            // Keep messages and other participants in the store
+            // They will be cleared when the component unmounts
           });
         })
-        .catch(error => {
+        .catch((error: Error) => {
           console.error('Error leaving room:', error);
         });
     }
   },
 
-  sendMessage: async (supabase: SupabaseClient, text: string) => {
+  sendMessage: async (supabase: SupabaseClient<Database>, text: string) => {
     const { roomId, currentParticipantId, currentLanguage, participants } = get();
     
     if (!roomId || !currentParticipantId || !currentLanguage) {
@@ -244,21 +367,27 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const translationPromises = languagesToTranslate.map(async (language) => {
         const translatedText = await translateText(text, language);
         
-        return supabase
+        const { error: translationError } = await supabase
           .from('translations')
           .insert({
             message_id: messageId,
             language,
             translated_text: translatedText
           });
+
+        if (translationError) {
+          throw new Error(`Failed to save translation for ${language}: ${translationError.message}`);
+        }
       });
       
-      await Promise.all(translationPromises);
-      
-    } catch (error) {
-      set({ 
-        error: error instanceof Error ? error.message : 'Failed to send message'
+      await Promise.all(translationPromises).catch((error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to save translations';
+        throw new Error(errorMessage);
       });
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      set({ error: errorMessage });
     }
   },
   
@@ -267,41 +396,76 @@ export const useRoomStore = create<RoomState>((set, get) => ({
 
 // Helper function to set up real-time subscriptions
 function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
-  // Listen for new participants
-  supabase
-    .channel(`room:${roomId}:participants`)
+  const store = useRoomStore;
+  
+  // Remove all existing subscriptions
+  supabase.removeAllChannels();
+  
+  console.log('Setting up subscriptions for room:', roomId);
+  
+  // Create a single channel for all room events
+  const channel = supabase
+    .channel(`room:${roomId}`)
     .on('postgres_changes', { 
       event: 'INSERT', 
       schema: 'public', 
       table: 'participants',
       filter: `room_id=eq.${roomId}`
     }, (payload) => {
-      useRoomStore.setState(state => ({
-        participants: [
-          ...state.participants,
-          {
-            id: payload.new.id,
-            userName: payload.new.user_name,
-            language: payload.new.language
-          }
-        ]
-      }));
+      console.log('Received participant insert:', payload.new);
+      const state = store.getState();
+      // Only add the participant if they don't already exist
+      if (!state.participants.some(p => p.id === payload.new.id)) {
+        console.log('Adding new participant:', payload.new.id);
+        store.setState({
+          ...state,
+          participants: [
+            ...state.participants,
+            {
+              id: payload.new.id,
+              userName: payload.new.user_name,
+              language: payload.new.language
+            }
+          ]
+        });
+      } else {
+        console.log('Participant already exists:', payload.new.id);
+      }
     })
     .on('postgres_changes', {
       event: 'DELETE',
       schema: 'public',
       table: 'participants',
       filter: `room_id=eq.${roomId}`
-    }, (payload) => {
-      useRoomStore.setState(state => ({
-        participants: state.participants.filter(p => p.id !== payload.old.id)
-      }));
+    }, async () => {
+      console.log('Received participant delete');
+      // Fetch fresh participant list to ensure we have the latest state
+      const { data: participants, error } = await supabase
+        .from('participants')
+        .select('id, user_name, language')
+        .eq('room_id', roomId);
+
+      if (!error && participants) {
+        console.log('Updating participants list:', participants);
+        const state = store.getState();
+        // Update participants list, ensuring no duplicates
+        const uniqueParticipants = participants.reduce((acc, p) => {
+          if (!acc.some(existing => existing.id === p.id)) {
+            acc.push({
+              id: p.id,
+              userName: p.user_name,
+              language: p.language
+            });
+          }
+          return acc;
+        }, [] as ParticipantData[]);
+
+        store.setState({
+          ...state,
+          participants: uniqueParticipants
+        });
+      }
     })
-    .subscribe();
-    
-  // Listen for new messages
-  supabase
-    .channel(`room:${roomId}:messages`)
     .on('postgres_changes', {
       event: 'INSERT',
       schema: 'public',
@@ -321,7 +485,7 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
         .select('language, translated_text')
         .eq('message_id', payload.new.id);
         
-      const translationsMap = translations?.reduce((acc, t) => {
+      const translationsMap = translations?.reduce<Record<string, string>>((acc, t) => {
         acc[t.language] = t.translated_text;
         return acc;
       }, {}) || {};
@@ -340,11 +504,6 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
         messages: [...state.messages, newMessage]
       }));
     })
-    .subscribe();
-    
-  // Listen for new translations
-  supabase
-    .channel(`room:${roomId}:translations`)
     .on('postgres_changes', {
       event: 'INSERT',
       schema: 'public',
@@ -375,12 +534,20 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
         }));
       }
     })
-    .subscribe();
+    .subscribe((status) => {
+      console.log('Subscription status:', status);
+    });
+
+  return channel;
 }
 
-// Mock function for translation - would be replaced by actual OpenAI call
+// Replace the mock translation function with the actual OpenAI implementation
 async function translateText(text: string, targetLanguage: string): Promise<string> {
-  // This is just a placeholder - in the real app, we'd call the OpenAI API
-  // But for this example, we're just appending a note
-  return `[Translated to ${targetLanguage}]: ${text}`;
+  try {
+    return await openAITranslateText(text, targetLanguage);
+  } catch (error: unknown) {
+    console.error('Translation error:', error);
+    // Return a fallback message if translation fails
+    return `[Translation failed for ${targetLanguage}]: ${text}`;
+  }
 }
