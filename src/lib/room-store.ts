@@ -186,7 +186,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
               participantId
             }));
           }
-        } catch (e) {
+        } catch {
           // If there's any error with stored data, create new participant
           participantId = nanoid();
           const { error: participantError } = await supabase
@@ -286,7 +286,14 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       });
       
       // Setup real-time subscription
-      setupRoomSubscriptions(supabase, roomId);
+      const channel = setupRoomSubscriptions(supabase, roomId);
+      
+      // Store channel reference for cleanup
+      const state = get();
+      if (state.channel) {
+        state.channel.unsubscribe();
+      }
+      set({ channel });
       
       return { participantId };
     } catch (error: unknown) {
@@ -305,6 +312,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     if (roomId && currentParticipantId) {
       // Cleanup subscription
       if (channel) {
+        console.log('Cleaning up channel before leaving room');
         channel.unsubscribe();
       }
       
@@ -321,7 +329,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
             currentParticipantId: null,
             currentLanguage: null,
             channel: null,
-            isCreatingRoom: false,  // Reset creation flag
+            isCreatingRoom: false,
             // Keep messages and other participants in the store
             // They will be cleared when the component unmounts
           });
@@ -398,14 +406,25 @@ export const useRoomStore = create<RoomState>((set, get) => ({
 function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
   const store = useRoomStore;
   
-  // Remove all existing subscriptions
-  supabase.removeAllChannels();
+  // Get existing channel
+  const existingChannel = store.getState().channel;
+  
+  // Only remove the specific channel if it exists
+  if (existingChannel) {
+    console.log('Unsubscribing from existing channel');
+    existingChannel.unsubscribe();
+  }
   
   console.log('Setting up subscriptions for room:', roomId);
   
   // Create a single channel for all room events
   const channel = supabase
-    .channel(`room:${roomId}`)
+    .channel(`room:${roomId}`, {
+      config: {
+        broadcast: { self: true },
+        presence: { key: roomId }
+      }
+    })
     .on('postgres_changes', { 
       event: 'INSERT', 
       schema: 'public', 
@@ -437,16 +456,21 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
       schema: 'public',
       table: 'participants',
       filter: `room_id=eq.${roomId}`
-    }, async () => {
-      console.log('Received participant delete');
+    }, async (payload) => {
+      console.log('Received participant delete:', payload);
       // Fetch fresh participant list to ensure we have the latest state
       const { data: participants, error } = await supabase
         .from('participants')
         .select('id, user_name, language')
         .eq('room_id', roomId);
 
-      if (!error && participants) {
-        console.log('Updating participants list:', participants);
+      if (error) {
+        console.error('Error fetching participants after delete:', error);
+        return;
+      }
+
+      if (participants) {
+        console.log('Updating participants list after delete:', participants);
         const state = store.getState();
         // Update participants list, ensuring no duplicates
         const uniqueParticipants = participants.reduce((acc, p) => {
@@ -472,18 +496,27 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
       table: 'messages',
       filter: `room_id=eq.${roomId}`
     }, async (payload) => {
+      console.log('Received message insert:', payload.new);
       // Get participant info for the sender
-      const { data: senderData } = await supabase
+      const { data: senderData, error: senderError } = await supabase
         .from('participants')
         .select('user_name')
         .eq('id', payload.new.sender_id)
         .single();
         
+      if (senderError) {
+        console.error('Error fetching sender data:', senderError);
+      }
+        
       // Get translations for this message
-      const { data: translations } = await supabase
+      const { data: translations, error: translationsError } = await supabase
         .from('translations')
         .select('language, translated_text')
         .eq('message_id', payload.new.id);
+        
+      if (translationsError) {
+        console.error('Error fetching translations:', translationsError);
+      }
         
       const translationsMap = translations?.reduce<Record<string, string>>((acc, t) => {
         acc[t.language] = t.translated_text;
@@ -500,6 +533,7 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
         createdAt: payload.new.created_at
       };
       
+      console.log('Adding new message to state:', newMessage);
       useRoomStore.setState(state => ({
         messages: [...state.messages, newMessage]
       }));
@@ -509,15 +543,22 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
       schema: 'public',
       table: 'translations'
     }, async (payload) => {
+      console.log('Received translation insert:', payload.new);
       // Find the message this translation belongs to
-      const { data: messageData } = await supabase
+      const { data: messageData, error: messageError } = await supabase
         .from('messages')
         .select('id, room_id')
         .eq('id', payload.new.message_id)
         .single();
         
+      if (messageError) {
+        console.error('Error fetching message data for translation:', messageError);
+        return;
+      }
+        
       // Only update if it's for our room
       if (messageData?.room_id === roomId) {
+        console.log('Updating message with new translation:', payload.new);
         useRoomStore.setState(state => ({
           messages: state.messages.map(msg => {
             if (msg.id === payload.new.message_id) {
@@ -532,10 +573,29 @@ function setupRoomSubscriptions(supabase: SupabaseClient, roomId: string) {
             return msg;
           })
         }));
+      } else {
+        console.log('Translation for different room, ignoring:', messageData?.room_id);
       }
     })
-    .subscribe((status) => {
+    .on('system', { event: 'disconnected' }, () => {
+      console.log('Channel disconnected, attempting to reconnect...');
+    })
+    .on('system', { event: 'connected' }, () => {
+      console.log('Channel connected successfully');
+    })
+    .subscribe((status, err) => {
       console.log('Subscription status:', status);
+      if (err) {
+        console.error('Subscription error:', err);
+        // Attempt to reconnect on error
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.log('Attempting to reconnect...');
+          setTimeout(() => {
+            const newChannel = setupRoomSubscriptions(supabase, roomId);
+            store.setState({ channel: newChannel });
+          }, 1000);
+        }
+      }
     });
 
   return channel;

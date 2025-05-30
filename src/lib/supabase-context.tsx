@@ -16,7 +16,13 @@ type SupabaseContext = {
 const SupabaseContext = createContext<SupabaseContext | undefined>(undefined);
 
 export function SupabaseProvider({ children }: { children: React.ReactNode }) {
-  const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+  const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    realtime: {
+      params: {
+        eventsPerSecond: 10
+      }
+    }
+  });
   
   return (
     <SupabaseContext.Provider value={{ supabase }}>
