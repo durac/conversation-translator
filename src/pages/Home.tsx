@@ -19,7 +19,7 @@ const Home: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           className="max-w-md w-full mx-auto text-center"
         >
-          <div className="flex justify-center mb-6">
+          <div className="flex justify-center mb-6 mt-10">
             <div className="relative">
               <div className="absolute inset-0 bg-primary-200 rounded-full blur-xl opacity-50"></div>
               <div className="relative text-white p-4 rounded-full">
