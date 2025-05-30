@@ -10,18 +10,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.7",
-    "framer-motion": "^10.16.16",
-    "i18next": "^25.2.1",
-    "i18next-browser-languagedetector": "^8.1.0",
     "lucide-react": "^0.344.0",
-    "nanoid": "^5.0.4",
-    "openai": "^4.28.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-hook-form": "^7.49.2",
-    "react-i18next": "^15.5.2",
+    "@supabase/supabase-js": "^2.39.7",
+    "openai": "^4.28.0",
     "react-router-dom": "^6.21.1",
+    "framer-motion": "^10.16.16",
+    "react-hook-form": "^7.49.2",
+    "nanoid": "^5.0.4",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
