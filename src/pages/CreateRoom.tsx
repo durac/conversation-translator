@@ -53,10 +53,12 @@ const CreateRoom: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-50">
-      <Header title="Create Conversation" showBackButton/>
+    <div className="fixed inset-0 flex flex-col bg-gray-50">
+      <div className="flex-none">
+        <Header title="Create Conversation" showBackButton/>
+      </div>
       
-      <main className="flex-1 p-4 md:p-6 flex items-center justify-center">
+      <main className="flex-1 overflow-y-auto p-4 md:p-6 flex items-center justify-center">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

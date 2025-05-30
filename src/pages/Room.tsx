@@ -121,8 +121,10 @@ const Room: React.FC = () => {
   if (roomCode && currentParticipantId && participants.length === 1 && participants[0].id === currentParticipantId) {
     return (
       <div className="fixed inset-0 flex flex-col bg-gray-50">
-        <Header title="LingoLoom" roomCode={roomCode} onLeaveRoom={handleLeaveRoom} />
-        <div className="flex-1 flex flex-col items-center justify-center p-4">
+        <div className="flex-none">
+          <Header title="LingoLoom" roomCode={roomCode} onLeaveRoom={handleLeaveRoom} />
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-y-auto">
           <div className="text-center max-w-md">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">Room Created!</h2>
             <RoomCodeDisplay code={roomCode} />
@@ -140,27 +142,29 @@ const Room: React.FC = () => {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-gray-50">
-      <Header title="LingoLoom" roomCode={roomCode} onLeaveRoom={handleLeaveRoom} />
-      
-      {error && (
-        <div className="bg-error-50 border border-error-200 text-error-700 px-4 py-3 mx-4 mt-2 rounded">
-          <div className="flex">
-            <div className="flex-1">
-              <p className="text-sm">{error}</p>
+      <div className="flex-none">
+        <Header title="LingoLoom" roomCode={roomCode} onLeaveRoom={handleLeaveRoom} />
+        
+        {error && (
+          <div className="bg-error-50 border border-error-200 text-error-700 px-4 py-3 mx-4 mt-2 rounded">
+            <div className="flex">
+              <div className="flex-1">
+                <p className="text-sm">{error}</p>
+              </div>
+              <button onClick={clearError} className="text-error-500">
+                &times;
+              </button>
             </div>
-            <button onClick={clearError} className="text-error-500">
-              &times;
-            </button>
           </div>
-        </div>
-      )}
+        )}
 
-      <ParticipantsList 
-        participants={participants} 
-        currentParticipantId={currentParticipantId} 
-      />
+        <ParticipantsList 
+          participants={participants} 
+          currentParticipantId={currentParticipantId} 
+        />
+      </div>
 
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div className="flex-1 overflow-y-auto">
           <MessageList 
             messages={messages} 

@@ -8,10 +8,12 @@ import Logo from '../assets/logo.svg';
 
 const Home: React.FC = () => {
   return (
-    <div className="flex flex-col min-h-screen">
-      <Header title="LingoLoom" />
+    <div className="fixed inset-0 flex flex-col bg-gray-50">
+      <div className="flex-none">
+        <Header title="LingoLoom" />
+      </div>
       
-      <main className="flex-1 p-4 md:p-6 flex flex-col items-center justify-center">
+      <main className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col items-center justify-center">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -79,7 +81,7 @@ const Home: React.FC = () => {
         </motion.div>
       </main>
       
-      <footer className="py-4 text-center text-gray-500 text-sm">
+      <footer className="flex-none py-4 text-center text-gray-500 text-sm">
         <p>© 2025 LingoLoom. All rights reserved.</p>
       </footer>
     </div>
