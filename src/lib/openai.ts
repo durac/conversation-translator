@@ -33,7 +33,7 @@ export async function transcribeSpeech(audioBlob: Blob): Promise<string> {
 export async function translateText(text: string, targetLanguage: string): Promise<string> {
   try {
     const chatCompletion = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-4.1-mini',
       messages: [
         {
           role: 'system',
@@ -45,7 +45,7 @@ export async function translateText(text: string, targetLanguage: string): Promi
         }
       ],
       temperature: 0.3,
-      max_tokens: 1000,
+      max_tokens: 16000,
     });
 
     return chatCompletion.choices[0].message.content?.trim() || '';
